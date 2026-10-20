@@ -1,4 +1,35 @@
+/*
+ * WooCommerce Ecommerce DataLayer — companion script
+ * Loaded by the "WooCommerce Ecommerce DataLayer" GTM custom template.
+ *
+ * Reads its config from window._gtmWooConfig (set by the template before injection):
+ *   window._gtmWooConfig = {
+ *     customPaths: "/print-stakla,/custom-glass",   // → view_item
+ *     customListPaths: "/promocii",                 // → view_item_list
+ *     productLinkPaths: ""                          // optional extra product URL bases
+ *   }
+ *
+ * Host this first-party (e.g. via your Cloudflare Worker) and point the template's
+ * "Tracking script URL" field at it. No edits needed per account — the custom paths
+ * come from the template field.
+ *
+ * v1.1.0 — fire the template on the built-in "All Pages" trigger. The script waits for
+ * DOM ready itself and only runs on single-product pages, product list archives that
+ * contain a product grid, and the custom paths. No extra variables/triggers needed.
+ *
+ * v1.2.0 — universal list detection: product cards are found on any theme/builder —
+ * WooCommerce loops (ul.products / .products), Blocks, Elementor Loop, Flatsome,
+ * WoodMart…, add-to-cart buttons (data-product_id) and product links (/product/,
+ * /produkt/ …). Header, menus, footer, sidebars and mini/side carts are ignored;
+ * home (unless it is the shop), cart, checkout and account pages never push lists.
+ * Custom list paths force view_item_list (product paths win when both match).
+ *
+ * v1.2.1 — custom cards without prices (image + heading + "learn more" button,
+ * e.g. manufacturer catalogs) are recognised; the same product shown in a tab or
+ * banner and in the grid is counted once (grid card wins).
+ */
 (function (run) {
+  // Tag may fire on gtm.js (All Pages) → wait until the DOM is parsed.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', run);
   } else {
@@ -31,6 +62,7 @@
 
   var path = (window.location.pathname || '').toLowerCase();
 
+  // Product paths win when a URL matches both lists.
   var matchedCustomPath = matchPath(path, parsePaths(CUSTOM_PRODUCT_PATHS));
   var matchedCustomListPath = matchedCustomPath ? '' : matchPath(path, parsePaths(CUSTOM_LIST_PATHS));
   var isCustomProduct = matchedCustomPath !== '';
@@ -43,6 +75,10 @@
     return (' ' + classList + ' ').indexOf(' ' + name + ' ') !== -1;
   }
 
+  // ── Product card detection (universal) ─────────────────────────────────────
+  // A card is a WooCommerce / Blocks / builder product item, or — for custom
+  // markup — the block around an add-to-cart button or product link that holds
+  // only that one product. See findCards().
   var PRODUCT_LINK_PATHS = ['/product/', '/produkt/', '/produs/', '/producto/', '/produto/',
     '/prodotto/', '/produit/', '/proizvod/', '/tovar/'].concat(parsePaths(EXTRA_PRODUCT_LINK_PATHS));
 
@@ -55,6 +91,7 @@
 
   var SEED_SELECTOR = CARD_SELECTOR + ', [data-product_id], [data-product-id], ' + PRODUCT_LINK_SELECTOR;
 
+  // Site chrome is never a product list: header, menus, footer, sidebars, mini/side carts.
   var SKIP_SELECTOR = 'header, footer, nav, aside, .menu, .site-header, .site-footer, #masthead, ' +
     '#colophon, .widget-area, .sidebar, #secondary, [role="banner"], [role="navigation"], ' +
     '[role="contentinfo"], [role="complementary"], [data-elementor-type="header"], ' +
@@ -66,26 +103,39 @@
   var TITLE_CLASS_SELECTORS = ['.woocommerce-loop-product__title', '.wc-block-grid__product-title',
     '.wp-block-post-title', '.product-title', '.product_title', '.product-name'];
 
-  var TITLE_GENERIC_SELECTORS = ['h2', 'h3', 'h4', 'h1', 'h5', 'h6', '.name', '.title',
+  var TITLE_GENERIC_SELECTORS = ['h2', 'h3', 'h4', 'h5', 'h6', '.name', '.title',
     '[class*="title"]', '[class*="name"]'];
 
   var PRICE_SELECTOR = '.woocommerce-Price-amount, [itemprop="price"]';
 
+  var IMAGE_SELECTOR = 'img, picture, [style*="background-image"]';
+
+  var TITLE_COUNT_SELECTOR = 'h2, h3, h4, h5, h6, ' + TITLE_CLASS_SELECTORS.join(', ');
+
+  // ── Page gate — replaces the old "cjs - ecommerce.product_page" variable + trigger.
   var isSingleClass = hasClass('single-product');
   var isProductArchive = !isSingleClass && (
     hasClass('woocommerce') || hasClass('post-type-archive-product') ||
     hasClass('woocommerce-shop') || /(^| )tax-product_/.test(classList)
   );
 
+  // Home (unless it is the shop), cart, checkout and account pages are never lists.
   var isExcludedPage =
     ((hasClass('home') || hasClass('front-page')) && !isProductArchive) ||
     hasClass('woocommerce-cart') || hasClass('woocommerce-checkout') || hasClass('woocommerce-account');
 
+  // Blog posts: only real WooCommerce/Blocks grids count, never cards guessed
+  // from links in the article.
+  var allowClimb = !hasClass('single-post');
+
+  // Shop / product taxonomy pages always qualify (grid may load later); any other
+  // page qualifies when it already shows at least two product cards.
   var gateCards = null;
-  var isListCandidate = !isExcludedPage && (isProductArchive || (gateCards = findCards()).length > 0);
+  var isListCandidate = !isExcludedPage && (isProductArchive || (gateCards = findCards()).length > 1);
 
   if (!isCustomProduct && !isCustomList && !isSingleClass && !isListCandidate) return;
 
+  // Custom paths override the body-class detection.
   var isSingleProduct = isCustomProduct || (!isCustomList && isSingleClass);
   var isListPage = !isSingleProduct;
 
@@ -199,6 +249,7 @@
   }
 
   function getProductIdFromPage() {
+    // Custom (non-Woo) product page → derive a stable id from the configured path.
     if (isCustomProduct) {
       return customSlug() || 'custom-product';
     }
@@ -316,6 +367,7 @@
       }
     }
 
+    // Custom (non-Woo) page fallback → use the path slug so the item still has a category.
     if (!cats.length && isCustomProduct) {
       var slug = customSlug().replace(/-/g, ' ');
       if (slug) cats.push(slug);
@@ -346,6 +398,9 @@
 
     item = addCategoriesToItem(item);
 
+    // ── Variable product support (inherited from site 2). ─────────────
+    // Auto-gated: inert on sites without WooCommerce variable products,
+    // and skipped entirely on custom (non-Woo) pages.
     var isVariable = !isCustomProduct && typeof wc_add_to_cart_variation_params !== 'undefined';
 
     if (isVariable) {
@@ -407,6 +462,7 @@
             quantity: 1
           };
 
+          // Carry over any resolved categories from the base item.
           for (var ck in item) {
             if (item.hasOwnProperty(ck) && ck.indexOf('item_category') === 0) {
               vItem[ck] = item[ck];
@@ -451,6 +507,7 @@
   }
 
   function getListId() {
+    // Custom list page → stable id from the configured path.
     if (isCustomList) {
       return matchedCustomListPath.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
     }
@@ -480,11 +537,14 @@
     return !!area && area !== document.body && area !== document.documentElement;
   }
 
+  // Product URL without domain / query / hash / trailing slash.
   function linkKey(a) {
     return (a.getAttribute('href') || '')
       .replace(/^[a-z]+:\/\/[^\/]+/i, '').split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
   }
 
+  // True while the block contains at most one product id and one product URL —
+  // i.e. we haven't climbed out of the card into the grid.
   function holdsOneProduct(el) {
     var seen = {};
     var ids = 0;
@@ -537,6 +597,7 @@
     return '';
   }
 
+  // display:none blocks (hidden drawers, other breakpoint) and off-canvas panels don't count.
   function isShown(el) {
     if (!el.getClientRects().length) return false;
     var rect = el.getBoundingClientRect();
@@ -550,25 +611,53 @@
       getLinkText(card);
   }
 
+  // Inline link inside a text paragraph (blog/content) — not a product card.
+  function isProseLink(el) {
+    var block = el.closest('p, td, dd, blockquote');
+    return !!block && cleanText(block.textContent).length - cleanText(el.textContent).length > 80;
+  }
+
+  // A card needs a name (title, or link text next to a price) and an image or a
+  // price — catalogs without prices (image + heading + "learn more") included.
+  function isAcceptableCard(el) {
+    var hasPrice = !!el.querySelector(PRICE_SELECTOR);
+    if (!hasPrice && !el.querySelector(IMAGE_SELECTOR)) return false;
+    return !!(firstText(el, TITLE_CLASS_SELECTORS) || firstText(el, TITLE_GENERIC_SELECTORS) ||
+      (hasPrice && getLinkText(el)));
+  }
+
+  function tooBig(el) {
+    return !holdsOneProduct(el) || cleanText(el.textContent).length > 5000;
+  }
+
+  // Custom/builder markup (no WooCommerce card classes).
   function climbToCard(seed) {
     var card = null;
+    var el;
 
-    for (var el = seed.parentElement; el && el !== document.body; el = el.parentElement) {
-      if (!holdsOneProduct(el) || cleanText(el.textContent).length > 600) break;
+    // 1) Smallest block around the link/button that looks like a card.
+    for (el = seed.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (tooBig(el)) return null;
+      if (isAcceptableCard(el)) { card = el; break; }
+    }
+    if (!card) return null;
+
+    // 2) Grow it to the whole card (price, button…): stop at the grid (another
+    //    product) or when the parent brings another title or image (section header, banner).
+    var titles = card.querySelectorAll(TITLE_COUNT_SELECTOR).length;
+    var images = card.querySelectorAll(IMAGE_SELECTOR).length;
+
+    for (el = card.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (tooBig(el) ||
+          el.querySelectorAll(TITLE_COUNT_SELECTOR).length > titles ||
+          el.querySelectorAll(IMAGE_SELECTOR).length > images) break;
       card = el;
     }
 
-    if (!card) return null;
-
-    var hasPrice = !!card.querySelector(PRICE_SELECTOR);
-    var accept =
-      firstText(card, TITLE_CLASS_SELECTORS) ||
-      firstText(card, TITLE_GENERIC_SELECTORS, isLinkedTitle) ||
-      (hasPrice && (firstText(card, TITLE_GENERIC_SELECTORS) || getLinkText(card)));
-
-    return accept ? card : null;
+    return card;
   }
 
+  // Seed already inside a found card (image link, title, button of the same product).
   function insideAny(cards, el) {
     for (var i = 0; i < cards.length; i++) {
       if (cards[i] !== el && cards[i].contains(el)) return true;
@@ -583,10 +672,12 @@
     for (var i = 0; i < seeds.length; i++) {
       if (insideAny(cards, seeds[i]) || inSkippedArea(seeds[i])) continue;
 
-      var card = seeds[i].closest(CARD_SELECTOR) || climbToCard(seeds[i]);
+      var card = seeds[i].closest(CARD_SELECTOR);
+      if (!card && allowClimb && !isProseLink(seeds[i])) card = climbToCard(seeds[i]);
       if (card && cards.indexOf(card) === -1 && isShown(card)) cards.push(card);
     }
 
+    // Nested matches → keep the outermost card.
     return cards.filter(function (card) {
       for (var k = 0; k < cards.length; k++) {
         if (cards[k] !== card && cards[k].contains(card)) return false;
@@ -620,6 +711,7 @@
     if (!id && /^product-\d+$/.test(card.id || '')) id = card.id.replace('product-', '');
 
     if (!id) {
+      // Slug from the product URL, e.g. /produkt/vrata-x/ → vrata-x
       var link = card.querySelector(PRODUCT_LINK_SELECTOR);
       id = link ? linkKey(link).split('/').pop() : '';
       try { id = decodeURIComponent(id); } catch (e) {}
@@ -640,22 +732,43 @@
     var listName = getListName();
     var listId = getListId();
     var items = [];
-    var seenIds = {};
+    var entries = [];
+    var best = {};
+    var i;
 
-    for (var i = 0; i < cards.length; i++) {
+    for (i = 0; i < cards.length; i++) {
       var name = getCardName(cards[i]);
       if (!name) continue;
 
-      var id = String(getCardId(cards[i], name));
-      if (seenIds[id]) continue;
-      seenIds[id] = true;
+      var siblings = 0;
+      for (var s = 0; s < cards.length; s++) {
+        if (cards[s].parentElement === cards[i].parentElement) siblings++;
+      }
+
+      entries.push({
+        card: cards[i],
+        name: name,
+        id: String(getCardId(cards[i], name)),
+        // Same product in a tab/banner and in the grid → the grid card wins.
+        score: (siblings > 1 ? 2 : 0) + (cards[i].querySelector(IMAGE_SELECTOR) ? 1 : 0)
+      });
+    }
+
+    for (i = 0; i < entries.length; i++) {
+      var key = 'id:' + entries[i].id;
+      if (!best[key] || entries[i].score > best[key].score) best[key] = entries[i];
+    }
+
+    for (i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (best['id:' + entry.id] !== entry) continue;
 
       items.push({
-        item_id: id,
-        item_name: name,
-        item_category: getProductCardCategory(cards[i]),
-        price: getBestPriceFromContainer(cards[i]),
-        imageUrl: getProductCardImage(cards[i]),
+        item_id: entry.id,
+        item_name: entry.name,
+        item_category: getProductCardCategory(entry.card),
+        price: getBestPriceFromContainer(entry.card),
+        imageUrl: getProductCardImage(entry.card),
         item_list_id: listId,
         item_list_name: listName,
         index: items.length + 1,
@@ -680,6 +793,8 @@
   }
 
   if (isSingleProduct) {
+    // Custom pages won't have .product_title/.price → push immediately,
+    // no point waiting on the observer.
     if (isCustomProduct || document.querySelector('.product_title, .price')) {
       pushViewItem();
     } else {
@@ -700,6 +815,7 @@
 
   } else if (isListPage) {
     if (!pushViewItemList()) {
+      // Grid rendered later (AJAX / builders) → retry on DOM changes, max ~4×/s.
       var listTimer = null;
       var listObs = new MutationObserver(function (mutations, ob) {
         if (listTimer) return;
