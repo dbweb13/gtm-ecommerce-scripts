@@ -27,6 +27,10 @@
  * v1.2.1 — custom cards without prices (image + heading + "learn more" button,
  * e.g. manufacturer catalogs) are recognised; the same product shown in a tab or
  * banner and in the grid is counted once (grid card wins).
+ *
+ * v1.2.2 — variable products: view_item uses the pre-selected (default) variation,
+ * or the parent product when nothing is selected (was: always the first variation);
+ * WooCommerce's own found_variation for that default no longer pushes a duplicate.
  */
 (function (run) {
   // Tag may fire on gtm.js (All Pages) → wait until the DOM is parsed.
@@ -401,32 +405,42 @@
     // ── Variable product support (inherited from site 2). ─────────────
     // Auto-gated: inert on sites without WooCommerce variable products,
     // and skipped entirely on custom (non-Woo) pages.
-    var isVariable = !isCustomProduct && typeof wc_add_to_cart_variation_params !== 'undefined';
+    var varForm = document.querySelector('.variations_form');
+    var isVariable = !isCustomProduct &&
+      (typeof wc_add_to_cart_variation_params !== 'undefined' || !!varForm);
+    var lastVariationId = '';
 
     if (isVariable) {
-      var varForm = document.querySelector('.variations_form');
-
       if (varForm && varForm.dataset && varForm.dataset.product_variations) {
         try {
-          var variations = JSON.parse(varForm.dataset.product_variations);
+          var variations = JSON.parse(varForm.dataset.product_variations) || [];
+          var selects = varForm.querySelectorAll('select[name^="attribute_"]');
+          var selected = {};
+          var allSelected = selects.length > 0;
           var defaultVar = null;
 
-          for (var i = 0; i < variations.length; i++) {
-            if (variations[i].is_default === true) {
-              defaultVar = variations[i];
-              break;
-            }
+          for (var si = 0; si < selects.length; si++) {
+            selected[selects[si].name] = selects[si].value;
+            if (!selects[si].value) allSelected = false;
           }
 
-          if (!defaultVar && variations.length > 0) defaultVar = variations[0];
+          // Only the pre-selected (default) variation; nothing selected → parent product.
+          for (var i = 0; allSelected && !defaultVar && i < variations.length; i++) {
+            var matches = true;
+            for (var an in selected) {
+              var va = variations[i].attributes && variations[i].attributes[an];
+              if (va && va !== selected[an]) { matches = false; break; }
+            }
+            if (matches) defaultVar = variations[i];
+          }
 
           if (defaultVar) {
             var varPrice = parseFloat(defaultVar.display_price) || price;
             var attrs = [];
 
             for (var key in defaultVar.attributes) {
-              if (defaultVar.attributes.hasOwnProperty(key) && defaultVar.attributes[key]) {
-                attrs.push(defaultVar.attributes[key]);
+              if (defaultVar.attributes.hasOwnProperty(key) && (defaultVar.attributes[key] || selected[key])) {
+                attrs.push(defaultVar.attributes[key] || selected[key]);
               }
             }
 
@@ -434,12 +448,17 @@
             item.item_variant = attrs.join(' • ');
             item.price = varPrice;
             price = varPrice;
+            lastVariationId = item.item_id;
           }
         } catch (e) {}
       }
 
       if (typeof jQuery !== 'undefined') {
         jQuery(document.body).on('found_variation', function (ev, variation) {
+          // WooCommerce also fires this for the pre-selected variation → already pushed.
+          if (!variation || String(variation.variation_id) === lastVariationId) return;
+          lastVariationId = String(variation.variation_id);
+
           dataLayer.push({ ecommerce: null });
 
           var varAttrs = [];
