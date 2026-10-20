@@ -31,6 +31,9 @@
  * v1.2.2 — variable products: view_item uses the pre-selected (default) variation,
  * or the parent product when nothing is selected (was: always the first variation);
  * WooCommerce's own found_variation for that default no longer pushes a duplicate.
+ * Safety net: when the detection finds nothing, the logic of the previous Custom
+ * HTML tags runs (grid-based, then /produkt/-link-based) on the same pages their
+ * cjs variables allowed — so the template never finds less than they did.
  */
 (function (run) {
   // Tag may fire on gtm.js (All Pages) → wait until the DOM is parsed.
@@ -132,10 +135,21 @@
   // from links in the article.
   var allowClimb = !hasClass('single-post');
 
+  // Pages your old cjs variables let through (parity): an archive with a WooCommerce
+  // grid (cjs v1) or any page with a product link (cjs v2, /produkt/ sites).
+  var hasOldGrid =
+    /\b(archive|post-type-archive-product|tax-product_cat|tax-product_tag|woocommerce-shop)\b/.test(classList) &&
+    !!document.querySelector('.products, ul.products, .woocommerce-products');
+  var hasProductLinks = allowClimb && !!document.querySelector(PRODUCT_LINK_SELECTOR);
+
+  // Outside shop/category pages one detected card alone is a promo, not a list.
+  var minCards = isProductArchive || isCustomList || hasOldGrid ? 1 : 2;
+
   // Shop / product taxonomy pages always qualify (grid may load later); any other
-  // page qualifies when it already shows at least two product cards.
+  // page qualifies when it shows product cards or product links.
   var gateCards = null;
-  var isListCandidate = !isExcludedPage && (isProductArchive || (gateCards = findCards()).length > 1);
+  var isListCandidate = !isExcludedPage &&
+    (isProductArchive || hasOldGrid || hasProductLinks || (gateCards = findCards()).length >= minCards);
 
   if (!isCustomProduct && !isCustomList && !isSingleClass && !isListCandidate) return;
 
@@ -739,24 +753,47 @@
     return id || name.toLowerCase().replace(/\s+/g, '-');
   }
 
-  var listPushed = false;
+  // ── Fallbacks = your previous Custom HTML tags, used only when the detection
+  // above finds nothing, so the template never finds less than they did.
 
-  function pushViewItemList() {
-    if (listPushed) return true;
+  // Old grid tag (sites with ul.products): first WooCommerce grid → its .product items.
+  function getOldGridCards() {
+    var grid = document.querySelector(
+      '.products, ul.products, .woocommerce-loop-products, .product-grid, .grid.products, ' +
+      '.woocommerce-products, .elementor-products-grid, .ast-woo-shop-products'
+    );
+    return grid ? grid.querySelectorAll('.product, .woocommerce-loop-product, .product-item, .elementor-product') : [];
+  }
 
-    var cards = gateCards || findCards();
-    gateCards = null;
-    if (!cards.length) return false;
+  // Old link tag (/produkt/ sites): nearest div/li around each product link that has a title.
+  function getOldLinkCards() {
+    var links = document.querySelectorAll(PRODUCT_LINK_SELECTOR);
+    var cards = [];
 
-    var listName = getListName();
-    var listId = getListId();
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].closest('header, footer, nav')) continue;
+      var card = links[i].closest('div, li');
+      if (card && card.querySelector('h1, h2, h3, .title') && cards.indexOf(card) === -1) cards.push(card);
+    }
+    return cards;
+  }
+
+  function oldName(selector) {
+    return function (card) {
+      var el = card.querySelector(selector);
+      if (!el) return '';
+      return cleanText(el.innerText || el.textContent) || cleanText(el.getAttribute('title') || '');
+    };
+  }
+
+  function itemsFromCards(cards, nameOf, listId, listName) {
     var items = [];
     var entries = [];
     var best = {};
     var i;
 
     for (i = 0; i < cards.length; i++) {
-      var name = getCardName(cards[i]);
+      var name = nameOf(cards[i]);
       if (!name) continue;
 
       var siblings = 0;
@@ -793,6 +830,29 @@
         index: items.length + 1,
         quantity: 1
       });
+    }
+
+    return items;
+  }
+
+  var listPushed = false;
+
+  function pushViewItemList() {
+    if (listPushed) return true;
+
+    var cards = gateCards || findCards();
+    gateCards = null;
+
+    var listName = getListName();
+    var listId = getListId();
+    var items = itemsFromCards(cards, getCardName, listId, listName);
+
+    if (items.length < minCards) {
+      items = itemsFromCards(getOldGridCards(),
+        oldName('.woocommerce-loop-product__title, h2, h3, .product-title, a[title], .title'), listId, listName);
+    }
+    if (!items.length && allowClimb) {
+      items = itemsFromCards(getOldLinkCards(), oldName('h1, h2, h3, .title'), listId, listName);
     }
 
     if (!items.length) return false;
