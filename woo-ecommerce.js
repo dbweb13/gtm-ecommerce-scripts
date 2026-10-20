@@ -8,8 +8,19 @@
  * Host this first-party (e.g. via your Cloudflare Worker) and point the template's
  * "Tracking script URL" field at it. No edits needed per account — the custom paths
  * come from the template field.
+ *
+ * v1.1.0 — fire the template on the built-in "All Pages" trigger. The script waits for
+ * DOM ready itself and only runs on single-product pages, product list archives that
+ * contain a product grid, and the custom paths. No extra variables/triggers needed.
  */
-(function () {
+(function (run) {
+  // Tag may fire on gtm.js (All Pages) → wait until the DOM is parsed.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run);
+  } else {
+    run();
+  }
+})(function () {
   var cfg = window._gtmWooConfig || {};
   var CUSTOM_PRODUCT_PATHS = cfg.customPaths || '';
 
@@ -36,6 +47,21 @@
 
   var body = document.body;
   var classList = (body && body.className) || '';
+
+  // ── Page gate — replaces the old "cjs - ecommerce.product_page" variable + trigger.
+  // Same rules: custom path OR single product OR list archive with a product grid.
+  var isSingleClass = /\bsingle-product\b/.test(classList);
+  var isListArchive =
+    (
+      /\barchive\b/.test(classList) ||
+      /\bpost-type-archive-product\b/.test(classList) ||
+      /\btax-product_cat\b/.test(classList) ||
+      /\btax-product_tag\b/.test(classList) ||
+      /\bwoocommerce-shop\b/.test(classList)
+    ) &&
+    !!document.querySelector('.products, ul.products, .woocommerce-products');
+
+  if (!isCustomProduct && !isSingleClass && !isListArchive) return;
 
   var isSingleProduct = /\bsingle-product\b/.test(classList) || isCustomProduct;
   var isListPage = /\bwoocommerce\b/.test(classList) && !isSingleProduct;
@@ -571,4 +597,4 @@
       }, 10000);
     }
   }
-})();
+});
