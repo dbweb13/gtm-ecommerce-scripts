@@ -1,20 +1,4 @@
-/*
- * WooCommerce Ecommerce DataLayer — companion script
- * Loaded by the "WooCommerce Ecommerce DataLayer" GTM custom template.
- *
- * Reads its config from window._gtmWooConfig (set by the template before injection):
- *   window._gtmWooConfig = { customPaths: "/print-stakla,/custom-glass" }
- *
- * Host this first-party (e.g. via your Cloudflare Worker) and point the template's
- * "Tracking script URL" field at it. No edits needed per account — the custom paths
- * come from the template field.
- *
- * v1.1.0 — fire the template on the built-in "All Pages" trigger. The script waits for
- * DOM ready itself and only runs on single-product pages, product list archives that
- * contain a product grid, and the custom paths. No extra variables/triggers needed.
- */
 (function (run) {
-  // Tag may fire on gtm.js (All Pages) → wait until the DOM is parsed.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', run);
   } else {
@@ -23,48 +7,87 @@
 })(function () {
   var cfg = window._gtmWooConfig || {};
   var CUSTOM_PRODUCT_PATHS = cfg.customPaths || '';
+  var CUSTOM_LIST_PATHS = cfg.customListPaths || '';
+  var EXTRA_PRODUCT_LINK_PATHS = cfg.productLinkPaths || '';
 
   if (window._gtmWooEcommerceDone) return;
   window._gtmWooEcommerceDone = true;
 
   window.dataLayer = window.dataLayer || [];
 
-  var customPaths = (CUSTOM_PRODUCT_PATHS || '')
-    .split(',')
-    .map(function (p) { return p.replace(/\s+/g, '').toLowerCase(); })
-    .filter(function (p) { return p.length > 0; });
+  function parsePaths(raw) {
+    return (raw || '')
+      .split(',')
+      .map(function (p) { return p.replace(/\s+/g, '').toLowerCase(); })
+      .filter(function (p) { return p.length > 0; });
+  }
+
+  function matchPath(value, paths) {
+    for (var i = 0; i < paths.length; i++) {
+      if (value.indexOf(paths[i]) !== -1) return paths[i];
+    }
+    return '';
+  }
 
   var path = (window.location.pathname || '').toLowerCase();
 
-  var matchedCustomPath = '';
-  for (var ci = 0; ci < customPaths.length; ci++) {
-    if (path.indexOf(customPaths[ci]) !== -1) {
-      matchedCustomPath = customPaths[ci];
-      break;
-    }
-  }
+  var matchedCustomPath = matchPath(path, parsePaths(CUSTOM_PRODUCT_PATHS));
+  var matchedCustomListPath = matchedCustomPath ? '' : matchPath(path, parsePaths(CUSTOM_LIST_PATHS));
   var isCustomProduct = matchedCustomPath !== '';
+  var isCustomList = matchedCustomListPath !== '';
 
   var body = document.body;
-  var classList = (body && body.className) || '';
+  var classList = ((body && body.className) || '').replace(/\s+/g, ' ');
 
-  // ── Page gate — replaces the old "cjs - ecommerce.product_page" variable + trigger.
-  // Same rules: custom path OR single product OR list archive with a product grid.
-  var isSingleClass = /\bsingle-product\b/.test(classList);
-  var isListArchive =
-    (
-      /\barchive\b/.test(classList) ||
-      /\bpost-type-archive-product\b/.test(classList) ||
-      /\btax-product_cat\b/.test(classList) ||
-      /\btax-product_tag\b/.test(classList) ||
-      /\bwoocommerce-shop\b/.test(classList)
-    ) &&
-    !!document.querySelector('.products, ul.products, .woocommerce-products');
+  function hasClass(name) {
+    return (' ' + classList + ' ').indexOf(' ' + name + ' ') !== -1;
+  }
 
-  if (!isCustomProduct && !isSingleClass && !isListArchive) return;
+  var PRODUCT_LINK_PATHS = ['/product/', '/produkt/', '/produs/', '/producto/', '/produto/',
+    '/prodotto/', '/produit/', '/proizvod/', '/tovar/'].concat(parsePaths(EXTRA_PRODUCT_LINK_PATHS));
 
-  var isSingleProduct = /\bsingle-product\b/.test(classList) || isCustomProduct;
-  var isListPage = /\bwoocommerce\b/.test(classList) && !isSingleProduct;
+  var PRODUCT_LINK_SELECTOR = 'a.woocommerce-LoopProduct-link, a.woocommerce-loop-product__link, ' +
+    PRODUCT_LINK_PATHS.map(function (p) {
+      return 'a[href*="' + p.replace(/["\\]/g, '') + '"]';
+    }).join(', ');
+
+  var CARD_SELECTOR = '.type-product, li.product, .products .product, .wc-block-grid__product, .wc-block-product';
+
+  var SEED_SELECTOR = CARD_SELECTOR + ', [data-product_id], [data-product-id], ' + PRODUCT_LINK_SELECTOR;
+
+  var SKIP_SELECTOR = 'header, footer, nav, aside, .menu, .site-header, .site-footer, #masthead, ' +
+    '#colophon, .widget-area, .sidebar, #secondary, [role="banner"], [role="navigation"], ' +
+    '[role="contentinfo"], [role="complementary"], [data-elementor-type="header"], ' +
+    '[data-elementor-type="footer"], .elementor-location-header, .elementor-location-footer, ' +
+    '.woocommerce-mini-cart, .widget_shopping_cart, .cart_list, .product_list_widget, ' +
+    '.elementor-menu-cart__container, .xoo-wsc-modal, .xoo-wsc-container, .fkcart-modal, ' +
+    '.xt_woofc, .woofc-area, .cc-window, .vi-wcaio-sidebar-cart';
+
+  var TITLE_CLASS_SELECTORS = ['.woocommerce-loop-product__title', '.wc-block-grid__product-title',
+    '.wp-block-post-title', '.product-title', '.product_title', '.product-name'];
+
+  var TITLE_GENERIC_SELECTORS = ['h2', 'h3', 'h4', 'h1', 'h5', 'h6', '.name', '.title',
+    '[class*="title"]', '[class*="name"]'];
+
+  var PRICE_SELECTOR = '.woocommerce-Price-amount, [itemprop="price"]';
+
+  var isSingleClass = hasClass('single-product');
+  var isProductArchive = !isSingleClass && (
+    hasClass('woocommerce') || hasClass('post-type-archive-product') ||
+    hasClass('woocommerce-shop') || /(^| )tax-product_/.test(classList)
+  );
+
+  var isExcludedPage =
+    ((hasClass('home') || hasClass('front-page')) && !isProductArchive) ||
+    hasClass('woocommerce-cart') || hasClass('woocommerce-checkout') || hasClass('woocommerce-account');
+
+  var gateCards = null;
+  var isListCandidate = !isExcludedPage && (isProductArchive || (gateCards = findCards()).length > 0);
+
+  if (!isCustomProduct && !isCustomList && !isSingleClass && !isListCandidate) return;
+
+  var isSingleProduct = isCustomProduct || (!isCustomList && isSingleClass);
+  var isListPage = !isSingleProduct;
 
   function cleanText(value) {
     return value ? String(value).replace(/\s+/g, ' ').trim() : '';
@@ -176,7 +199,6 @@
   }
 
   function getProductIdFromPage() {
-    // Custom (non-Woo) product page → derive a stable id from the configured path.
     if (isCustomProduct) {
       return customSlug() || 'custom-product';
     }
@@ -294,7 +316,6 @@
       }
     }
 
-    // Custom (non-Woo) page fallback → use the path slug so the item still has a category.
     if (!cats.length && isCustomProduct) {
       var slug = customSlug().replace(/-/g, ' ');
       if (slug) cats.push(slug);
@@ -325,9 +346,6 @@
 
     item = addCategoriesToItem(item);
 
-    // ── Variable product support (inherited from site 2). ─────────────
-    // Auto-gated: inert on sites without WooCommerce variable products,
-    // and skipped entirely on custom (non-Woo) pages.
     var isVariable = !isCustomProduct && typeof wc_add_to_cart_variation_params !== 'undefined';
 
     if (isVariable) {
@@ -389,7 +407,6 @@
             quantity: 1
           };
 
-          // Carry over any resolved categories from the base item.
           for (var ck in item) {
             if (item.hasOwnProperty(ck) && ck.indexOf('item_category') === 0) {
               vItem[ck] = item[ck];
@@ -434,52 +451,14 @@
   }
 
   function getListId() {
+    if (isCustomList) {
+      return matchedCustomListPath.replace(/^\/+|\/+$/g, '').replace(/\//g, '-');
+    }
+
     var match = classList.match(/term-(\d+)/);
     if (match && match[1]) return match[1];
 
     return '';
-  }
-
-  function getProductCardId(product, fallbackIndex, name) {
-    var id = '';
-
-    var atcB = product.querySelector('[data-product_id], .add_to_cart_button');
-
-    if (atcB && atcB.dataset && atcB.dataset.product_id) {
-      id = atcB.dataset.product_id;
-    }
-
-    if (!id) {
-      var clsMatch = product.className.match(/post-(\d+)/);
-      if (clsMatch && clsMatch[1]) id = clsMatch[1];
-    }
-
-    if (!id && product.id && product.id.indexOf('product-') === 0) {
-      id = product.id.replace('product-', '');
-    }
-
-    if (!id) {
-      id = 'item_' + fallbackIndex + '_' +
-        name.toLowerCase().replace(/\W+/g, '-').substring(0, 30);
-    }
-
-    return id;
-  }
-
-  function getProductCardName(product) {
-    var nameEl = product.querySelector(
-      '.woocommerce-loop-product__title, h2, h3, .product-title, a[title], .title'
-    );
-
-    if (!nameEl) return '';
-
-    var name = cleanText(nameEl.innerText || nameEl.textContent);
-
-    if (!name && nameEl.getAttribute) {
-      name = cleanText(nameEl.getAttribute('title') || '');
-    }
-
-    return name;
   }
 
   function getProductCardCategory(product) {
@@ -496,51 +475,187 @@
     return img ? (img.currentSrc || img.src || '') : '';
   }
 
+  function inSkippedArea(el) {
+    var area = el.closest(SKIP_SELECTOR);
+    return !!area && area !== document.body && area !== document.documentElement;
+  }
+
+  function linkKey(a) {
+    return (a.getAttribute('href') || '')
+      .replace(/^[a-z]+:\/\/[^\/]+/i, '').split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
+  }
+
+  function holdsOneProduct(el) {
+    var seen = {};
+    var ids = 0;
+    var urls = 0;
+    var idEls = el.querySelectorAll('[data-product_id], [data-product-id]');
+    var linkEls = el.querySelectorAll(PRODUCT_LINK_SELECTOR);
+
+    for (var i = 0; i < idEls.length; i++) {
+      var id = 'id:' + (idEls[i].getAttribute('data-product_id') || idEls[i].getAttribute('data-product-id'));
+      if (!seen[id]) { seen[id] = true; ids++; }
+    }
+    for (var j = 0; j < linkEls.length; j++) {
+      var url = 'url:' + linkKey(linkEls[j]);
+      if (!seen[url]) { seen[url] = true; urls++; }
+    }
+
+    return ids <= 1 && urls <= 1;
+  }
+
+  function firstText(root, selectors, filter) {
+    for (var i = 0; i < selectors.length; i++) {
+      var els = root.querySelectorAll(selectors[i]);
+      for (var j = 0; j < els.length; j++) {
+        var text = cleanText(els[j].innerText || els[j].textContent);
+        if (text && (!filter || filter(els[j]))) return text;
+      }
+    }
+    return '';
+  }
+
+  function isLinkedTitle(el) {
+    return !!(el.querySelector(PRODUCT_LINK_SELECTOR) || el.closest(PRODUCT_LINK_SELECTOR));
+  }
+
+  function getLinkText(card) {
+    var links = card.querySelectorAll(PRODUCT_LINK_SELECTOR);
+    var i;
+    var text;
+
+    for (i = 0; i < links.length; i++) {
+      text = cleanText(links[i].innerText || links[i].textContent);
+      if (text) return text;
+    }
+    for (i = 0; i < links.length; i++) {
+      var img = links[i].querySelector('img');
+      text = cleanText(links[i].getAttribute('title') || links[i].getAttribute('aria-label') ||
+        (img && img.getAttribute('alt')) || '');
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function isShown(el) {
+    if (!el.getClientRects().length) return false;
+    var rect = el.getBoundingClientRect();
+    return rect.right > 0 && rect.left < (window.innerWidth || document.documentElement.clientWidth);
+  }
+
+  function getCardName(card) {
+    return firstText(card, TITLE_CLASS_SELECTORS) ||
+      firstText(card, TITLE_GENERIC_SELECTORS, isLinkedTitle) ||
+      firstText(card, TITLE_GENERIC_SELECTORS) ||
+      getLinkText(card);
+  }
+
+  function climbToCard(seed) {
+    var card = null;
+
+    for (var el = seed.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (!holdsOneProduct(el) || cleanText(el.textContent).length > 600) break;
+      card = el;
+    }
+
+    if (!card) return null;
+
+    var hasPrice = !!card.querySelector(PRICE_SELECTOR);
+    var accept =
+      firstText(card, TITLE_CLASS_SELECTORS) ||
+      firstText(card, TITLE_GENERIC_SELECTORS, isLinkedTitle) ||
+      (hasPrice && (firstText(card, TITLE_GENERIC_SELECTORS) || getLinkText(card)));
+
+    return accept ? card : null;
+  }
+
+  function insideAny(cards, el) {
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i] !== el && cards[i].contains(el)) return true;
+    }
+    return false;
+  }
+
+  function findCards() {
+    var seeds = document.querySelectorAll(SEED_SELECTOR);
+    var cards = [];
+
+    for (var i = 0; i < seeds.length; i++) {
+      if (insideAny(cards, seeds[i]) || inSkippedArea(seeds[i])) continue;
+
+      var card = seeds[i].closest(CARD_SELECTOR) || climbToCard(seeds[i]);
+      if (card && cards.indexOf(card) === -1 && isShown(card)) cards.push(card);
+    }
+
+    return cards.filter(function (card) {
+      for (var k = 0; k < cards.length; k++) {
+        if (cards[k] !== card && cards[k].contains(card)) return false;
+      }
+      return true;
+    });
+  }
+
+  function getCardId(card, name) {
+    var idEl = card.matches('[data-product_id], [data-product-id]') ? card :
+      card.querySelector('[data-product_id], [data-product-id]');
+    var id = idEl ? (idEl.getAttribute('data-product_id') || idEl.getAttribute('data-product-id')) : '';
+
+    if (!id) {
+      var postMatch = (' ' + card.className + ' ').match(/\spost-(\d+)\s/);
+      if (postMatch) id = postMatch[1];
+    }
+
+    if (!id) {
+      var ctxEl = card.matches('[data-wc-context]') ? card : card.querySelector('[data-wc-context]');
+      var ctxMatch = ctxEl && (ctxEl.getAttribute('data-wc-context') || '').match(/"productId"\s*:\s*"?(\d+)/);
+      if (ctxMatch) id = ctxMatch[1];
+    }
+
+    if (!id) {
+      var postEl = card.matches('[data-post-id]') ? card : card.querySelector('[data-post-id]');
+      var postId = postEl ? postEl.getAttribute('data-post-id') : '';
+      if (/^\d+$/.test(postId || '')) id = postId;
+    }
+
+    if (!id && /^product-\d+$/.test(card.id || '')) id = card.id.replace('product-', '');
+
+    if (!id) {
+      var link = card.querySelector(PRODUCT_LINK_SELECTOR);
+      id = link ? linkKey(link).split('/').pop() : '';
+      try { id = decodeURIComponent(id); } catch (e) {}
+    }
+
+    return id || name.toLowerCase().replace(/\s+/g, '-');
+  }
+
+  var listPushed = false;
+
   function pushViewItemList() {
+    if (listPushed) return true;
+
+    var cards = gateCards || findCards();
+    gateCards = null;
+    if (!cards.length) return false;
+
     var listName = getListName();
     var listId = getListId();
-
-    var grid = document.querySelector(
-      '.products, ul.products, .woocommerce-loop-products, .product-grid, ' +
-      '.grid.products, .woocommerce-products, .elementor-products-grid, ' +
-      '.ast-woo-shop-products, [class*="product"]'
-    );
-
-    if (!grid) return false;
-
-    var products = grid.querySelectorAll(
-      'li.product, .product, .woocommerce-loop-product, .product-item, .post, ' +
-      '[class*="product"], .elementor-product'
-    );
-
-    if (!products.length) return false;
-
     var items = [];
     var seenIds = {};
-    var seenNames = {};
 
-    for (var i = 0; i < products.length; i++) {
-      var product = products[i];
+    for (var i = 0; i < cards.length; i++) {
+      var name = getCardName(cards[i]);
+      if (!name) continue;
 
-      if (!product.querySelector) continue;
-
-      var name = getProductCardName(product);
-      if (!name || seenNames[name]) continue;
-
-      var id = getProductCardId(product, i + 1, name);
+      var id = String(getCardId(cards[i], name));
       if (seenIds[id]) continue;
-
-      var price = getBestPriceFromContainer(product);
-
-      seenNames[name] = true;
       seenIds[id] = true;
 
       items.push({
         item_id: id,
         item_name: name,
-        item_category: getProductCardCategory(product),
-        price: price,
-        imageUrl: getProductCardImage(product),
+        item_category: getProductCardCategory(cards[i]),
+        price: getBestPriceFromContainer(cards[i]),
+        imageUrl: getProductCardImage(cards[i]),
         item_list_id: listId,
         item_list_name: listName,
         index: items.length + 1,
@@ -550,6 +665,7 @@
 
     if (!items.length) return false;
 
+    listPushed = true;
     dataLayer.push({ ecommerce: null });
     dataLayer.push({
       event: 'view_item_list',
@@ -564,8 +680,6 @@
   }
 
   if (isSingleProduct) {
-    // Custom pages won't have .product_title/.price → push immediately,
-    // no point waiting on the observer.
     if (isCustomProduct || document.querySelector('.product_title, .price')) {
       pushViewItem();
     } else {
@@ -586,8 +700,13 @@
 
   } else if (isListPage) {
     if (!pushViewItemList()) {
+      var listTimer = null;
       var listObs = new MutationObserver(function (mutations, ob) {
-        if (pushViewItemList()) ob.disconnect();
+        if (listTimer) return;
+        listTimer = setTimeout(function () {
+          listTimer = null;
+          if (pushViewItemList()) ob.disconnect();
+        }, 250);
       });
 
       listObs.observe(body, { childList: true, subtree: true });
