@@ -88,8 +88,8 @@ ___TEMPLATE_PARAMETERS___
         "name": "scriptUrl",
         "displayName": "Ecommerce Events Script URL",
         "simpleValueType": true,
-        "defaultValue": "https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.0/woocommerce-reader.js",
-        "help": "Defaults to the v1.3.0 reader in dbweb13/gtm-ecommerce-scripts. When upgrading a tag with an old saved woo-ecommerce.js URL, clear it to use this version. For your own script host, allow the corresponding reader URL under Injects scripts."
+        "defaultValue": "https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.1-preview.1/woocommerce-reader.js",
+        "help": "Defaults to the v1.3.1-preview.1 reader in dbweb13/gtm-ecommerce-scripts. When upgrading a tag with an old saved woo-ecommerce.js URL, clear it to use this version. For your own script host, allow the corresponding reader URL under Injects scripts."
       }
     ]
   }
@@ -102,7 +102,7 @@ const callInWindow = require('callInWindow');
 const setInWindow = require('setInWindow');
 const injectScript = require('injectScript');
 const queryPermission = require('queryPermission');
-const url = data.scriptUrl || 'https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.0/woocommerce-reader.js';
+const url = data.scriptUrl || 'https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.1-preview.1/woocommerce-reader.js';
 const options = {
   startFromTemplate: true,
   scopeMode: data.scopeMode || 'all',
@@ -188,7 +188,7 @@ scenarios:
     mock('queryPermission', true);
     mock('setInWindow', true);
     mock('injectScript', function(url, loaded, failed, cacheKey) {
-      assertThat(url).isEqualTo('https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.0/woocommerce-reader.js');
+      assertThat(url).isEqualTo('https://cdn.jsdelivr.net/gh/dbweb13/gtm-ecommerce-scripts@v1.3.1-preview.1/woocommerce-reader.js');
       assertThat(cacheKey).isEqualTo(url);
       loaded();
     });

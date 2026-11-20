@@ -397,6 +397,41 @@
     return nodes;
   }
 
+  function diviCards(root) {
+    var buttons = root.querySelectorAll('.entry-content .et_pb_column a.et_pb_button[href]');
+    var result = [];
+    Array.prototype.forEach.call(buttons, function (button) {
+      var column = button.closest('.et_pb_column');
+      var heading = column.querySelector('.et_pb_text.et_clickable h2, .et_pb_text.et_clickable h3');
+      if (heading && column.querySelector('img') && !column.closest(excluded) && result.indexOf(column) === -1) {
+        result.push(column);
+      }
+    });
+    return result;
+  }
+
+  function galleryModels(root) {
+    var entries = [];
+    var swatches = Object.create(null);
+    var images = root.querySelectorAll('.entry-content figure.wp-block-image img');
+    Array.prototype.forEach.call(images, function (img) {
+      if (img.closest(excluded)) return;
+      var src = imageUrl(img);
+      if (!src) return;
+      // A01.png and G01-1.png are model swatches. WordPress can add a size suffix.
+      var filename = new URL(src).pathname.split('/').pop();
+      var match = /^(?:(.+)[_-])?([a-z]\d{2,5})(?:-\d+)?(?:-\d+x\d+)?\.(?:avif|jpe?g|png|webp)$/i.exec(filename);
+      if (!match) return;
+      var model = match[2].toUpperCase();
+      var photo = !!match[1];
+      // A kitchen photo can be the sole image of a model. Its alt must confirm the code.
+      if (photo && attr(img, 'alt').toUpperCase().split(/[^A-Z0-9]+/).indexOf(model) === -1) return;
+      if (!photo) swatches[model] = true;
+      entries.push({key: 'model/' + model, photo: photo, item: {item_name: model, imageUrl: src, quantity: 1}});
+    });
+    return entries.filter(function (entry) { return !entry.photo || !swatches[entry.item.item_name]; });
+  }
+
   function listEntry(node, custom, currency) {
     var heading = node.matches(titleSelector) ? node : node.querySelector(titleSelector);
     var link = node.matches('a[href]') ? node : node.querySelector(productLinks) ||
@@ -447,8 +482,13 @@
       custom = !!nodes.length;
       if (!nodes.length) nodes = productCards(main);
       if (!nodes.length) nodes = linkedCards(main);
+      if (forced && !nodes.length) {
+        nodes = diviCards(main);
+        custom = !!nodes.length;
+      }
     }
-    if (!nodes.length) return false;
+    var entries = forced && !selector && !nodes.length ? galleryModels(main) : [];
+    if (!nodes.length && !entries.length) return false;
     var items = [];
     var seen = Object.create(null);
     var currency = declaredCurrency(nodes[0]) || code(options.fallbackCurrency) || 'EUR';
@@ -456,8 +496,9 @@
     var term = doc.body.className.match(/(?:^|\s)term-(\d+)(?:\s|$)/);
     var listId = term ? term[1] : pathKey(win.location.pathname);
     Array.prototype.forEach.call(nodes, function (node) {
-      if (node.closest(excluded)) return;
-      var entry = listEntry(node, custom, currency);
+      if (!node.closest(excluded)) entries.push(listEntry(node, custom, currency));
+    });
+    entries.forEach(function (entry) {
       if (!entry || seen[entry.key]) return;
       seen[entry.key] = true;
       entry.item.index = items.length + 1;
